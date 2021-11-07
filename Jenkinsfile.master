@@ -1,0 +1,35 @@
+#!/usr/bin/env groovy
+@Library('axon-shared-library') _
+
+pipeline {
+  agent any
+
+  stages {
+    stage('INFO') {
+      steps {
+        sh label: 'Environment Variables', script: 'env | sort'
+      }
+    }
+    stage('Cluster Terraform Drift Checking') {
+      steps {
+        script {
+          Map cluster_jobs = [:]
+
+          ['ecom-cluster-b', 'rms-cluster-a', 'rms-cluster-b'].each {
+            i -> cluster_jobs[i] = {
+              build job: 'ops/kubernetes2/terraform',
+                // pass the branch name that triggered this job into the downstream job so that it runs from the same branch
+                parameters: [
+                  string(name: 'GIT_BRANCH', value: "${env.GIT_BRANCH}"),
+                  string(name: 'cluster', value: i),
+                  string(name: 'terraform_action', value: 'plan'),
+                  booleanParam(name: 'post_to_slack', value: true)
+                ]
+            }
+          }
+          parallel cluster_jobs
+        }
+      }
+    }
+  }
+}

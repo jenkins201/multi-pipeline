@@ -1,0 +1,67 @@
+#!/usr/bin/env groovy
+@Library('axon-shared-library') _
+
+def GIT_URL = env.GIT_URL ? env.GIT_URL : scm.getUserRemoteConfigs()[0].getUrl()
+def REPO_OWNER = GIT_URL.split('/')[3]
+// trim the trailing '.git'
+def REPO = GIT_URL.split('/')[4].replaceAll("\\.git\$", "")
+def BASE_NAME = "${REPO_OWNER}/${REPO}"
+
+pipeline {
+  agent any
+
+  stages {
+    stage('INFO') {
+      steps {
+        sh label: 'Environment Variables', script: 'env | sort'
+      }
+    }
+    stage('PR Plans') {
+      matrix {
+        axes {
+          axis {
+            name 'cluster'
+            values 'ecom-cluster-b'
+          }
+        }
+
+        stages {
+          stage('plan') {
+            steps {
+              script {
+                // pass the branch name that triggered this job into the downstream job so that it runs from the same branch
+                // in a PR job, BRANCH_NAME & GIT_BRANCH are the PR name (i.e. PR-1791), which isnt a real branch,
+                def REAL_GIT_BRANCH = (env.CHANGE_BRANCH != null) ? env.CHANGE_BRANCH : env.BRANCH_NAME
+
+                build job: 'ops/kubernetes2/terraform',
+                  parameters: [string(name: 'GIT_BRANCH', value: "${REAL_GIT_BRANCH}"), string(name: 'cluster', value: cluster), string(name: 'terraform_action', value: 'plan')]
+              }
+            }
+          }
+        }
+
+        post {
+          success {
+            script {
+              pullRequest.createStatus(status: 'success',
+                            context: "jenkins-pr/${env.server_effective_deployment.toUpperCase()} ${cluster}",
+                            targetUrl: "${env.RUN_DISPLAY_URL}")
+            }
+          }
+          failure {
+            script {
+              pullRequest.createStatus(status: 'failure',
+                            context: "Azure ${section} ${env.server_effective_deployment.toUpperCase()} ${cluster}",
+                            targetUrl: "${env.RUN_DISPLAY_URL}")
+            }
+          }
+        }
+      }
+    }
+  }
+  post {
+    always {
+      cleanWs()
+    }
+  }
+}

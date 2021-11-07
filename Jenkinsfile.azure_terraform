@@ -1,0 +1,121 @@
+#!/usr/bin/env groovy
+@Library('axon-shared-library') _
+
+pipeline {
+  agent none
+
+  options {
+    ansiColor('xterm')
+  }
+
+  // the defaults should result in a no-op on a job that's triggered from other jobs
+  parameters {
+    // Terraform v0.12.31
+    string(name: 'axon_kubetools', defaultValue: 'docker.taservs.net/axon-kubetools:21.0526.418')
+    // default to PTPS-117-Update-k8s-cluster-VMSS-Images for the life of this PR, as Jenkinsfile.azure_terraform only exists on that branch
+    gitParameter name: 'GIT_BRANCH', branchFilter: 'origin/(.*)', defaultValue: 'PTPS-117-Update-k8s-cluster-VMSS-Images', type: 'PT_BRANCH'
+    choice name: 'cluster', choices: ['no-op', 'ecom-cluster-b', 'dispatch-cluster-a', 'rms-cluster-a'], description: ''
+    choice name: 'terraform_action', choices: ['plan', 'apply -auto-approve'], description: ''
+    booleanParam name: 'post_to_slack', defaultValue: false, description: ''
+  }
+
+  environment {
+    http_proxy = 'http://squid:3128'
+    https_proxy = 'http://squid:3128'
+    no_proxy = '169.254.169.254'
+  }
+
+  stages {
+    stage('Azure INFO') {
+      agent {
+        docker {
+          registryUrl 'https://docker.taservs.net'
+          registryCredentialsId 'dockerregistry'
+          image params.axon_kubetools
+          args "--entrypoint '' -e http_proxy=http://squid:3128 -e https_proxy=http://squid:3128 -e no_proxy=169.254.169.254"
+        }
+      }
+      steps {
+        // this is a pipeline called by other pipelines, so allow the caller to set the branch
+        checkout([$class: 'GitSCM',
+          branches: [[name: "${params.GIT_BRANCH}"]],
+          extensions: [],
+          userRemoteConfigs: [[credentialsId: 'git', url: scm.getUserRemoteConfigs()[0].getUrl()]]])
+
+        script {
+          // dynamically load pipeline library from this repo while we iterate on building blocks
+          library identifier: "kubernetes2-pipeline@${params.GIT_BRANCH}",
+                  retriever: modernSCM( [$class: 'GitSCMSource', remote: scm.getUserRemoteConfigs()[0].getUrl(), credentialsId: 'git'])
+
+          log.info "This is a dynamically loaded step"
+
+          sh './azure-msi-login.sh'
+
+          // check user access by listing the first 2 AzureAD users
+          sh label: 'Check AzureAD user access',
+            script: "az ad user list --query '[0:2].{mailNickname:mailNickname, userPrincipalName:userPrincipalName, objectId:objectId}'"
+          sh label: 'Check AzureAD SP access',
+            script: "az ad sp list --query '[0:4].{displayName:displayName, servicePrincipalType:servicePrincipalType, appId:appId}'"
+        }
+      }
+    }
+    stage('Azure terraform') {
+      when {
+        beforeAgent true
+        expression { params.cluster != 'no-op' }
+      }
+      agent {
+        docker {
+          registryUrl 'https://docker.taservs.net'
+          registryCredentialsId 'dockerregistry'
+          image params.axon_kubetools
+          args "--entrypoint '' -e http_proxy=http://squid:3128 -e https_proxy=http://squid:3128 -e no_proxy=169.254.169.254"
+        }
+      }
+      steps {
+        // this is a pipeline called by other pipelines, so allow the caller to set the branch
+        checkout([$class: 'GitSCM',
+          branches: [[name: "${params.GIT_BRANCH}"]],
+          extensions: [],
+          userRemoteConfigs: [[credentialsId: 'git', url: scm.getUserRemoteConfigs()[0].getUrl()]]])
+
+        script {
+          axon_tf_sh(params.cluster, env.server_effective_deployment, params.terraform_action, params.post_to_slack)
+        }
+      }
+    }
+  }
+}
+
+def axon_tf_sh(String clusterName, String deployment, String terraform_action, Boolean post_to_slack)
+{
+  withCredentials([file(credentialsId: 'sops-gpg-private-key.asc', variable: 'SOPS_GPG')]) {
+    sh "gpg --import $SOPS_GPG"
+    sh "./unlock.sh $deployment"
+    sh './azure-msi-login.sh'
+    sh "./tf.sh -c azure -s $clusterName -e $deployment $terraform_action | tee output.log"
+
+    // strip escape codes used to give colour (& color) output
+    sh "cat output.log | ./scripts/strip-control-characters.sh > plan.log"
+    archiveArtifacts artifacts: "plan.log", allowEmptyArchive: false
+
+    // Grab the pithy 'Plan: 2 to add, 4 to change, 1 to destroy.' line to a file on it's own.
+    sh "cat plan.log | grep ^Plan > plan.summary"
+    archiveArtifacts artifacts: "plan.summary", allowEmptyArchive: false
+
+    if (post_to_slack) {
+      String summary = readFile(file: "plan.summary")
+      String channel = "#deploy_${deployment == 'dv1' ? 'qa' : deployment }"
+      String bullet = "${deployment.toUpperCase()} ops/kubernetes2 ${clusterName} ${summary}\n${env.RUN_DISPLAY_URL}"
+      slack('warning', bullet, channel)
+    }
+  }
+}
+
+def slack(String color, String message, String channel) {
+  slackSend baseUrl: 'https://axon.slack.com/services/hooks/jenkins-ci/',
+    color: color,
+    channel: channel,
+    message: message,
+    tokenCredentialId: 'slack-token'
+}
