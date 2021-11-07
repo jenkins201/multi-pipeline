@@ -129,7 +129,7 @@ pipeline {
                 }
               }
               triggers {
-                periodic(60)
+                cron('@hourly')
               }
               orphanedItemStrategy {
                 discardOldItems {
