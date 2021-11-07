@@ -14,6 +14,7 @@ def REPO = GIT_URL.split('/')[4].replaceAll("\\.git\$", "")
 def BASE_NAME = "${REPO_OWNER}/${REPO}"
 
 def AXON_JENKINS_SHARED_LIBRARY = GIT_URL
+def default_branch = "main"
 
 pipeline {
   agent any
@@ -43,7 +44,7 @@ pipeline {
                   libraries {
                     libraryConfiguration {
                       name('axon-shared-library')
-                      defaultVersion('master')
+                      defaultVersion("${default_branch}")
                       implicit(false)
                       allowVersionOverride(true)
                       includeInChangesets(true)
@@ -73,7 +74,7 @@ pipeline {
                   libraries {
                     libraryConfiguration {
                       name('axon-shared-library')
-                      defaultVersion('master')
+                      defaultVersion("${default_branch}")
                       implicit(false)
                       allowVersionOverride(true)
                       includeInChangesets(true)
@@ -142,7 +143,7 @@ pipeline {
 
         // single-branch pipeline for drift/apply
         jobDsl scriptText: """
-            pipelineJob("${BASE_NAME}/master") {
+            pipelineJob("${BASE_NAME}/${default_branch}") {
               properties {
                 pipelineTriggers {
                   triggers {
@@ -156,12 +157,12 @@ pipeline {
               definition {
                 cpsScm {
                   lightweight(false)
-                  scriptPath('Jenkinsfile.master')
+                  scriptPath("Jenkinsfile.${default_branch}")
                   scm {
                     git {
                       branch("${env.GIT_BRANCH}")
                       // default to the branch that this pipeline is being run from
-                      //branch("origin/master")
+                      //branch("origin/${default_branch}")
                       remote {
                         credentials('git')
                         url('${GIT_URL}')
