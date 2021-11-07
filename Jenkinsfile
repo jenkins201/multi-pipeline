@@ -13,7 +13,6 @@ def REPO_OWNER = GIT_URL.split('/')[3]
 def REPO = GIT_URL.split('/')[4].replaceAll("\\.git\$", "")
 def BASE_NAME = "${REPO_OWNER}/${REPO}"
 
-# def AXON_JENKINS_SHARED_LIBRARY = 'https://git.taservs.net/smccartney/jenkins-shared-library.git'
 def AXON_JENKINS_SHARED_LIBRARY = GIT_URL
 
 pipeline {
