@@ -37,7 +37,6 @@ pipeline {
       steps {
         jobDsl scriptText: """
           folder("${REPO_OWNER}")
-        }
         """
         // Create the project folder, setting a shared pipeline library so that
         // simple jobs like pipelineJob can use libraries
