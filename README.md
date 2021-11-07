@@ -1,3 +1,4 @@
 # multi-pipeline
 
 trigger
+foo
