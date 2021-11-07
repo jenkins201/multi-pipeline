@@ -33,7 +33,7 @@ pipeline {
         sh label: 'Environment Variables', script: 'env | sort'
       }
     }
-    stage('SETUP') {
+    stage('Folders') {
       steps {
         // Create the project folder, setting a shared pipeline library so that
         // simple jobs like pipelineJob can use libraries
@@ -65,7 +65,11 @@ pipeline {
               }
         }
         """
+      }
+    }
 
+    stage('Jobs') {
+      steps {
         // Multibranch pipeline used for PR validation & feedback
         jobDsl scriptText: """
             multibranchPipelineJob("${BASE_NAME}/PRs") {
